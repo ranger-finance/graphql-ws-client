@@ -1,6 +1,8 @@
 //! Message definitions for the [graphql-transport-ws protocol][1]
 //!
 //! [1]: https://github.com/enisdenjo/graphql-ws/blob/HEAD/PROTOCOL.md
+//!
+use serde::Deserialize;
 
 #[derive(Default, Debug)]
 pub struct ConnectionInit<Payload = ()> {
@@ -32,6 +34,39 @@ where
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum ErrorPayload {
+    Direct(Vec<serde_json::Value>),
+    Wrapped { errors: Vec<serde_json::Value> },
+}
+
+// Need to support error fromats from both transport-ws and graphql-ws
+fn deserialize_error_payload<'de, D>(deserializer: D) -> Result<Vec<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+
+    match value {
+        // If it's already an array, use it directly
+        serde_json::Value::Array(arr) => Ok(arr),
+        // If it's an object, try to extract errors array
+        serde_json::Value::Object(obj) => {
+            if let Some(errors) = obj.get("errors") {
+                match errors {
+                    serde_json::Value::Array(arr) => Ok(arr.clone()),
+                    other => Ok(vec![other.clone()]),
+                }
+            } else {
+                Ok(vec![serde_json::Value::Object(obj)])
+            }
+        }
+        // For any other value, wrap in a single-element vector
+        other => Ok(vec![other]),
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(tag = "type")]
 pub enum Message<'a, Operation> {
@@ -57,6 +92,7 @@ pub enum Event {
     #[serde(rename = "error")]
     Error {
         id: String,
+        #[serde(deserialize_with = "deserialize_error_payload")]
         payload: Vec<serde_json::Value>,
     },
     #[serde(rename = "connection_error")]
