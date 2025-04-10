@@ -6,6 +6,8 @@ use std::{
 use futures_lite::{future, stream, FutureExt, StreamExt};
 use serde_json::{json, Value};
 
+use dioxus_logger::tracing;
+
 use crate::{
     logging::{trace, warning},
     protocol::Event,
@@ -101,21 +103,57 @@ impl ConnectionActor {
     }
 
     async fn handle_message(&mut self, message: Message) -> Option<Message> {
+        // tracing::info!("in handle_message");
         let event = match extract_event(message) {
             Ok(event) => event?,
             Err(Error::Close(code, reason)) => {
+                // tracing::error!("WebSocket closed: {} {}", code, reason);
                 return Some(Message::Close {
                     code: Some(code),
                     reason: Some(reason),
-                })
+                });
             }
             Err(other) => {
+                // tracing::error!("Error while decoding event: {:?}", other);
                 return Some(Message::Close {
                     code: Some(4857),
                     reason: Some(format!("Error while decoding event: {other}")),
-                })
+                });
             }
         };
+
+        // match &event {
+        //     Event::Next { .. } => {
+        //         tracing::info!("EVENT:: Next event: {:?}", event);
+        //     }
+        //     Event::Data { .. } => {
+        //         tracing::info!("EVENT:: Data event: {:?}", event);
+        //     }
+        //     Event::Error { .. } => {
+        //         tracing::error!("EVENT:: Error event: {:?}", event);
+        //     }
+        //     Event::ConnectionError { .. } => {
+        //         tracing::error!("EVENT:: Connection error: {:?}", event);
+        //     }
+        //     Event::Complete { .. } => {
+        //         tracing::info!("EVENT:: Complete event: {:?}", event);
+        //     }
+        //     Event::ConnectionAck { .. } => {
+        //         tracing::info!("EVENT:: Connection ack: {:?}", event);
+        //     }
+        //     Event::Ping { .. } => {
+        //         tracing::info!("EVENT:: Ping event: {:?}", event);
+        //     }
+        //     Event::Pong { .. } => {
+        //         tracing::info!("EVENT:: Pong event: {:?}", event);
+        //     }
+        //     Event::KeepAlive { .. } => {
+        //         tracing::info!("EVENT:: Keep alive event: {:?}", event);
+        //     }
+        //     Event::ConnectionKeepAlive { .. } => {
+        //         tracing::info!("EVENT:: Connection keep alive event: {:?}", event);
+        //     }
+        // };
 
         match event {
             event @ (Event::Next { .. }
@@ -205,16 +243,29 @@ impl IntoFuture for ConnectionActor {
 fn extract_event(message: Message) -> Result<Option<Event>, Error> {
     match message {
         Message::Text(s) => {
+            // tracing::info!("extract_event:: Decoding message: {}", s);
             trace!("Decoding message: {}", s);
+            // Decode("invalid type: map, expected a sequence") (what's logged on line 117 when we get an error Message)
+            // Format that's failing to decode: {"type":"error","id":"0","payload":{"errors":[{"message":"unexpected variables in variableValues: granularity","extensions":{"path":"$","code":"validation-failed"}}]}}
             Ok(Some(
                 serde_json::from_str(&s).map_err(|err| Error::Decode(err.to_string()))?,
             ))
         }
-        Message::Close { code, reason } => Err(Error::Close(
-            code.unwrap_or_default(),
-            reason.unwrap_or_default(),
-        )),
-        Message::Ping | Message::Pong => Ok(None),
+        Message::Close { code, reason } => {
+            // tracing::info!(
+            //     "extract_event:: Closing connection. Code: {:?}, reason: {:?}",
+            //     code,
+            //     reason
+            // );
+            Err(Error::Close(
+                code.unwrap_or_default(),
+                reason.unwrap_or_default(),
+            ))
+        }
+        Message::Ping | Message::Pong => {
+            // tracing::info!("extract_event:: Ping or Pong event");
+            Ok(None)
+        }
     }
 }
 
